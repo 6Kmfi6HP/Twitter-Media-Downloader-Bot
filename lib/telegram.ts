@@ -16,6 +16,15 @@ interface TelegramUpdate {
   message?: TelegramMessage;
 }
 
+interface MediaItem {
+  type: string;
+  media_url_https?: string;
+  variants?: Array<{
+    bitrate?: number;
+    url?: string;
+  }>;
+}
+
 export async function sendMessage(chatId: number, text: string) {
   const response = await fetch(`${TELEGRAM_API}/sendMessage`, {
     method: 'POST',
@@ -74,8 +83,8 @@ export async function processUpdate(update: TelegramUpdate) {
       }
 
       const caption = formatTweetCaption(tweetData.tweet);
-      const mediaGroup = tweetData.media_items.map(item => {
-        const mediaObject: any = {
+      const mediaGroup = tweetData.media_items.map((item: MediaItem) => {
+        const mediaObject = {
           type: item.type === 'video' ? 'video' : 'photo',
           media: item.type === 'video' ? 
             (item.variants?.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0))[0]?.url || '') :
