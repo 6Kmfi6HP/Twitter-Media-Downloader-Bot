@@ -77,12 +77,14 @@ export async function processUpdate(update: TelegramUpdate) {
     for (const url of twitterUrls) {
       const tweetData = await downloadTwitterMedia(url);
       
-      if (!tweetData.media_items.length) {
-        await sendMessage(chatId, '未找到媒体内容。');
+      const caption = formatTweetCaption(tweetData.tweet);
+      
+      // 如果是图片类型但没有媒体内容，只发送文本
+      if (tweetData.type === 'photo' && !tweetData.media_items.length) {
+        await sendMessage(chatId, caption);
         continue;
       }
 
-      const caption = formatTweetCaption(tweetData.tweet);
       const mediaGroup = tweetData.media_items.map((item: MediaItem) => {
         const mediaObject = {
           type: item.type === 'video' ? 'video' : 'photo',
