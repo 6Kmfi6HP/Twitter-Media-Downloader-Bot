@@ -120,7 +120,12 @@ export async function processUpdate(update: TelegramUpdate) {
     }
   } catch (error) {
     console.error('Error processing tweet:', error);
-    await sendMessage(chatId, '处理媒体内容时出错，请稍后重试。');
+    const errorMsg = await sendMessage(chatId, '处理媒体内容时出错，请稍后重试。');
+    if (errorMsg?.result?.message_id) {
+      setTimeout(async () => {
+        await deleteMessage(chatId, errorMsg.result.message_id);
+      }, 5000); // Delete after 5 seconds
+    }
   }
 }
 
@@ -166,6 +171,6 @@ export async function processDirectDownload(chatId: number, url: string) {
     }
   } catch (error) {
     console.error('Error processing direct download:', error);
-    await sendMessage(chatId, '处理请求时发生错误，请稍后重试。');
+    // await sendMessage(chatId, '处理请求时发生错误，请稍后重试。');
   }
 }
