@@ -59,29 +59,36 @@ export async function sendMediaGroup(chatId: number, media: any[], caption?: str
     }))
   });
 
-  // Assuming only one video for simplicity
-  const videoItem = media.find(item => item.type === 'video');
-  if (!videoItem) {
-    console.error('No video found in media group.');
-    return;
-  }
-
   const formData = new FormData();
   formData.append('chat_id', chatId.toString());
-  formData.append('media', JSON.stringify([{
-    type: 'video',
-    media: 'attach://video',
-    caption: caption,
-    parse_mode: 'HTML',
-  }]));
-  
-  // 创建带有正确 MIME 类型的 Blob
-  const videoBlob = new Blob([videoItem.media], { 
-    type: 'video/mp4'  // 指定 MIME 类型
-  });
-  
-  // 使用带有类型的 Blob 创建文件
-  formData.append('video', videoBlob, 'video.mp4');
+
+  // 处理不同类型的媒体
+  if (media[0].type === 'video') {
+    // 处理视频
+    const videoItem = media[0];
+    formData.append('media', JSON.stringify([{
+      type: 'video',
+      media: 'attach://video',
+      caption: caption,
+      parse_mode: 'HTML',
+    }]));
+
+    const videoBlob = new Blob([videoItem.media], { 
+      type: 'video/mp4'
+    });
+    formData.append('video', videoBlob, 'video.mp4');
+  } else if (media[0].type === 'photo') {
+    // 处理图片
+    formData.append('media', JSON.stringify([{
+      type: 'photo',
+      media: media[0].media,
+      caption: caption,
+      parse_mode: 'HTML',
+    }]));
+  } else {
+    console.error('Unsupported media type:', media[0].type);
+    return;
+  }
 
   console.log('Sending media group with FormData:', formData);
 
@@ -264,10 +271,14 @@ export async function processDirectDownload(chatId: number, url: string): Promis
     });
 
     if (mediaGroup.length > 0) {
-      console.log('Sending media group to Telegram...');
-      // This part needs to be updated to handle file uploads
-      const sendResult = await sendMediaGroup(chatId, mediaGroup, caption);
-      console.log('Media group send result:', sendResult);
+      console.log('Sending media to Telegram...');
+      if (mediaGroup.length === 1 && mediaGroup[0].type === 'photo') {
+        // 对于单张图片使用 sendPhoto
+        await sendPhoto(chatId, mediaGroup[0].media, caption);
+      } else {
+        // 对于视频或多个媒体项使用 sendMediaGroup
+        await sendMediaGroup(chatId, mediaGroup, caption);
+      }
     }
 
     return { success: true };
@@ -277,4 +288,29 @@ export async function processDirectDownload(chatId: number, url: string): Promis
       error: error instanceof Error ? error.message : 'Unknown error occurred'
     };
   }
+}
+
+export async function sendPhoto(chatId: number, photoUrl: string, caption?: string) {
+  console.log('Sending photo:', {
+    chatId,
+    photoUrl,
+    captionLength: caption?.length
+  });
+
+  const response = await fetch(`${TELEGRAM_API}/sendPhoto`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      chat_id: chatId,
+      photo: photoUrl,
+      caption: caption,
+      parse_mode: 'HTML',
+    }),
+  });
+
+  const result = await response.json();
+  console.log('Photo send response:', result);
+  return result;
 }
