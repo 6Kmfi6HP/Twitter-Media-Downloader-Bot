@@ -70,18 +70,24 @@ export async function sendMediaGroup(chatId: number, media: any[], caption?: str
   formData.append('chat_id', chatId.toString());
   formData.append('media', JSON.stringify([{
     type: 'video',
-    media: 'attach://video', // Use 'attach://' to indicate an attached file
+    media: 'attach://video',
     caption: caption,
     parse_mode: 'HTML',
   }]));
-  // Append the video file to the FormData
-  formData.append('video', new Blob([videoItem.media]), 'video.mp4');
+  
+  // 创建带有正确 MIME 类型的 Blob
+  const videoBlob = new Blob([videoItem.media], { 
+    type: 'video/mp4'  // 指定 MIME 类型
+  });
+  
+  // 使用带有类型的 Blob 创建文件
+  formData.append('video', videoBlob, 'video.mp4');
 
   console.log('Sending media group with FormData:', formData);
 
   const response = await fetch(`${TELEGRAM_API}/sendMediaGroup`, {
     method: 'POST',
-    body: formData, // Send the FormData object directly
+    body: formData,
   });
 
   const result = await response.json();
