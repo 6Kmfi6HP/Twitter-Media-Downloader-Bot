@@ -62,33 +62,37 @@ export async function sendMediaGroup(chatId: number, media: any[], caption?: str
   const formData = new FormData();
   formData.append('chat_id', chatId.toString());
 
-  // 处理不同类型的媒体
-  if (media[0].type === 'video') {
-    // 处理视频
-    const videoItem = media[0];
-    formData.append('media', JSON.stringify([{
-      type: 'video',
-      media: 'attach://video',
-      caption: caption,
-      parse_mode: 'HTML',
-    }]));
+  // 准备媒体数组
+  const mediaArray = media.map((item, index) => {
+    if (item.type === 'video') {
+      return {
+        type: 'video',
+        media: `attach://video${index}`,
+        caption: index === 0 ? caption : undefined,
+        parse_mode: 'HTML'
+      };
+    } else if (item.type === 'photo') {
+      return {
+        type: 'photo',
+        media: item.media,
+        caption: index === 0 ? caption : undefined,
+        parse_mode: 'HTML'
+      };
+    }
+  });
 
-    const videoBlob = new Blob([videoItem.media], { 
-      type: 'video/mp4'
-    });
-    formData.append('video', videoBlob, 'video.mp4');
-  } else if (media[0].type === 'photo') {
-    // 处理图片
-    formData.append('media', JSON.stringify([{
-      type: 'photo',
-      media: media[0].media,
-      caption: caption,
-      parse_mode: 'HTML',
-    }]));
-  } else {
-    console.error('Unsupported media type:', media[0].type);
-    return;
-  }
+  // 添加媒体数组到 FormData
+  formData.append('media', JSON.stringify(mediaArray));
+
+  // 添加所有视频文件到 FormData
+  media.forEach((item, index) => {
+    if (item.type === 'video') {
+      const videoBlob = new Blob([item.media], { 
+        type: 'video/mp4'
+      });
+      formData.append(`video${index}`, videoBlob, `video${index}.mp4`);
+    }
+  });
 
   console.log('Sending media group with FormData:', formData);
 
