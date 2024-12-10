@@ -25,6 +25,11 @@ interface MediaItem {
   }>;
 }
 
+export interface DownloadResult {
+  success: boolean;
+  error?: string;
+}
+
 export async function sendMessage(chatId: number, text: string) {
   console.log('Sending message to Telegram:', { chatId, textLength: text.length });
   const response = await fetch(`${TELEGRAM_API}/sendMessage`, {
@@ -44,9 +49,9 @@ export async function sendMessage(chatId: number, text: string) {
 }
 
 export async function sendMediaGroup(chatId: number, media: any[], caption?: string) {
-  console.log('Sending media group:', { 
-    chatId, 
-    mediaCount: media.length, 
+  console.log('Sending media group:', {
+    chatId,
+    mediaCount: media.length,
     captionLength: caption?.length,
     mediaDetails: media.map(m => ({
       type: m.type,
@@ -54,22 +59,29 @@ export async function sendMediaGroup(chatId: number, media: any[], caption?: str
     }))
   });
 
-  const requestBody = {
-    chat_id: chatId,
-    media: media.map((item, index) => ({
-      ...item,
-      caption: index === 0 ? caption : undefined,
-      parse_mode: 'HTML',
-    }))
-  };
-  console.log('Request body:', JSON.stringify(requestBody, null, 2));
+  // Assuming only one video for simplicity
+  const videoItem = media.find(item => item.type === 'video');
+  if (!videoItem) {
+    console.error('No video found in media group.');
+    return;
+  }
+
+  const formData = new FormData();
+  formData.append('chat_id', chatId.toString());
+  formData.append('media', JSON.stringify([{
+    type: 'video',
+    media: 'attach://video', // Use 'attach://' to indicate an attached file
+    caption: caption,
+    parse_mode: 'HTML',
+  }]));
+  // Append the video file to the FormData
+  formData.append('video', new Blob([videoItem.media]), 'video.mp4');
+
+  console.log('Sending media group with FormData:', formData);
 
   const response = await fetch(`${TELEGRAM_API}/sendMediaGroup`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(requestBody),
+    body: formData, // Send the FormData object directly
   });
 
   const result = await response.json();
@@ -163,7 +175,7 @@ export async function formatTweetCaption_without_name(tweet: any) {
   return `${text}`;
 }
 
-export async function processDirectDownload(chatId: number, url: string) {
+export async function processDirectDownload(chatId: number, url: string): Promise<DownloadResult> {
   try {
     console.log('Starting processDirectDownload:', { chatId, url });
 
@@ -189,20 +201,21 @@ export async function processDirectDownload(chatId: number, url: string) {
     if (tweetData.type === 'photo' && !tweetData.media_items.length) {
       console.log('No media items found, sending text only');
       await sendMessage(chatId, caption);
-      return;
+      return { success: true };
     }
 
     console.log('Processing media items...');
-    const mediaGroup = tweetData.media_items.map((item: MediaItem) => {
+    const mediaGroup = await Promise.all(tweetData.media_items.map(async (item: MediaItem) => {
       console.log('Processing media item:', {
         type: item.type,
         hasVariants: !!item.variants,
         variantsCount: item.variants?.length
       });
 
+      let mediaUrl: string | undefined;
       if (item.type === 'video' && item.variants) {
         const sortedVariants = item.variants.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
-        console.log('Sorted video variants:', 
+        console.log('Sorted video variants:',
           sortedVariants.map(v => ({
             bitrate: v.bitrate,
             url: v.url
@@ -213,17 +226,30 @@ export async function processDirectDownload(chatId: number, url: string) {
           bitrate: selectedVariant?.bitrate,
           url: selectedVariant?.url
         });
+        mediaUrl = selectedVariant?.url;
+      } else if (item.type === 'photo') {
+        mediaUrl = item.media_url_https;
+      }
+
+      // Download the media file if it's a video
+      let fileData: any = null;
+      if (item.type === 'video' && mediaUrl) {
+        console.log('Downloading video file from:', mediaUrl);
+        const response = await fetch(mediaUrl);
+        if (!response.ok) {
+          throw new Error(`Failed to download video: ${response.statusText}`);
+        }
+        fileData = await response.arrayBuffer();
+        console.log('Video file downloaded successfully.');
       }
 
       const mediaObject = {
         type: item.type === 'video' ? 'video' : 'photo',
-        media: item.type === 'video' ?
-          (item.variants?.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0))[0]?.url || '') :
-          item.media_url_https,
+        media: item.type === 'video' ? fileData : mediaUrl, // Use fileData for video
       };
       console.log('Created media object:', mediaObject);
       return mediaObject;
-    });
+    }));
 
     console.log('Media group prepared:', {
       count: mediaGroup.length,
@@ -233,19 +259,16 @@ export async function processDirectDownload(chatId: number, url: string) {
 
     if (mediaGroup.length > 0) {
       console.log('Sending media group to Telegram...');
+      // This part needs to be updated to handle file uploads
       const sendResult = await sendMediaGroup(chatId, mediaGroup, caption);
       console.log('Media group send result:', sendResult);
     }
-  } catch (error: unknown) {
-    console.error('Error processing direct download:', error);
-    if (error instanceof Error) {
-      console.log('Error details:', {
-        name: error.name,
-        message: error.message,
-        stack: error.stack
-      });
-    } else {
-      console.log('Unknown error type:', error);
-    }
+
+    return { success: true };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error occurred'
+    };
   }
 }

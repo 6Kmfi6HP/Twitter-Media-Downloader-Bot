@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { processDirectDownload } from '@/lib/telegram';
+import { processDirectDownload, type DownloadResult } from '@/lib/telegram';
 
 export async function POST(req: Request) {
   try {
@@ -24,7 +24,16 @@ export async function POST(req: Request) {
     }
 
     console.log('Starting direct download process for:', { chatId, url });
-    await processDirectDownload(Number(chatId), url);
+    const downloadResult: DownloadResult = await processDirectDownload(Number(chatId), url);
+    
+    if (!downloadResult.success) {
+      console.log('Download process failed:', downloadResult.error);
+      return NextResponse.json(
+        { ok: false, error: downloadResult.error || 'Download failed' },
+        { status: 400 }
+      );
+    }
+
     console.log('Download process completed successfully');
     return NextResponse.json({ ok: true, message: 'Download success.' });
   } catch (error) {
