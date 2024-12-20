@@ -125,15 +125,25 @@ export async function processUpdate(update: TelegramUpdate) {
   if (!message?.text) return;
 
   const chatId = message.chat.id;
-  const urls = extractUrls(message.text);
-  const twitterUrls = urls.filter(url => url.includes('twitter.com') || url.includes('x.com'));
+  const text = message.text;
 
-  if (twitterUrls.length === 0) {
-    await sendMessage(chatId, '请发送Twitter/X链接以下载媒体内容。');
+  if (!text) {
     return;
   }
 
   try {
+    // Replace t.co links with their redirected URLs
+    const processedText = await replaceShortLinks(text);
+    
+    // Extract URLs from the processed text
+    const urls = extractUrls(processedText);
+    const twitterUrls = urls.filter(url => url.includes('twitter.com') || url.includes('x.com'));
+
+    if (twitterUrls.length === 0) {
+      await sendMessage(chatId, '请发送Twitter/X链接以下载媒体内容。');
+      return;
+    }
+
     const processingMsg = await sendMessage(chatId, '正在处理您的请求...');
 
     for (const url of twitterUrls) {
@@ -177,19 +187,56 @@ export async function processUpdate(update: TelegramUpdate) {
   }
 }
 
-function formatTweetCaption(tweet: any) {
-  return `
-📱 <b>${tweet.user.name}</b> (@${tweet.user.screen_name})
-${tweet.text}
-
-❤️ ${tweet.favorite_count} | 🔄 ${tweet.retweet_count} | 💬 ${tweet.reply_count}
-${tweet.view_count ? `👁️ ${tweet.view_count} views` : ''}
-`.trim();
+async function followRedirect(url: string): Promise<string> {
+  const response = await fetch(url, {
+    method: 'GET',
+    redirect: 'manual'
+  });
+  
+  console.log('Response status:', response.status);
+  
+  if (response.status === 301 || response.status === 302) {
+    const location = response.headers.get('location');
+    if (!location) {
+      throw new Error('No redirect location found in 3xx response');
+    }
+    return location;
+  }
+  
+  return response.url;
 }
 
-export async function formatTweetCaption_without_name(tweet: any) {
-  const { text, user } = tweet;
-  return `${text}`;
+async function replaceShortLinks(text: string): Promise<string> {
+  const tcoPattern = /https:\/\/t\.co\/[a-zA-Z0-9]+/g;
+  const matches = text.match(tcoPattern);
+  
+  if (!matches) return text;
+  
+  let result = text;
+  for (const shortUrl of matches) {
+    try {
+      const redirectedUrl = await followRedirect(shortUrl);
+      result = result.replace(shortUrl, redirectedUrl);
+    } catch (error) {
+      console.error(`Error following redirect for ${shortUrl}:`, error);
+    }
+  }
+  
+  return result;
+}
+
+async function formatTweetCaption(tweet: any) {
+  const text = await replaceShortLinks(tweet.text);
+  return `
+📱 <b>${tweet.user.name}</b> (@${tweet.user.screen_name})
+${text}
+
+❤️ ${tweet.favorite_count} 🔄 ${tweet.retweet_count} 💬 ${tweet.reply_count} 👀 ${tweet.view_count}`;
+}
+
+async function formatTweetCaption_without_name(tweet: any) {
+  const text = await replaceShortLinks(tweet.text);
+  return text;
 }
 
 export async function processDirectDownload(chatId: number, url: string): Promise<DownloadResult> {
