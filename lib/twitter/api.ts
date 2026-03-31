@@ -40,6 +40,23 @@ interface FixTweetAPIResponse {
         duration?: number;
       }>;
     };
+    article?: {
+      title: string;
+      preview_text: string;
+      cover_media?: {
+        media_info?: {
+          original_img_url: string;
+          original_img_width: number;
+          original_img_height: number;
+        };
+      };
+      content?: {
+        blocks: Array<{
+          type: string;
+          text: string;
+        }>;
+      };
+    };
   };
 }
 
@@ -49,6 +66,36 @@ function extractTweetInfo(url: string): { tweetId: string | null; screenName: st
     return { screenName: match[1], tweetId: match[2] };
   }
   return { tweetId: null, screenName: null };
+}
+
+function buildArticleText(article: NonNullable<NonNullable<FixTweetAPIResponse['tweet']>['article']>): string {
+  const parts: string[] = [];
+
+  if (article.title) {
+    parts.push(`📝 ${article.title}`);
+    parts.push('');
+  }
+
+  if (article.content?.blocks) {
+    for (const block of article.content.blocks) {
+      if (block.type === 'atomic' || !block.text.trim()) {
+        parts.push('');
+      } else if (block.type === 'header-two' || block.type === 'header-three') {
+        parts.push(`\n▎${block.text}`);
+      } else if (block.type === 'unordered-list-item') {
+        parts.push(`• ${block.text}`);
+      } else if (block.type === 'ordered-list-item') {
+        parts.push(`· ${block.text}`);
+      } else {
+        parts.push(block.text);
+      }
+    }
+  } else if (article.preview_text) {
+    parts.push(article.preview_text);
+  }
+
+  // 去除连续空行
+  return parts.join('\n').replace(/\n{3,}/g, '\n\n').trim();
 }
 
 function determineMediaType(mediaItems: TwitterMediaItem[]): 'video' | 'photo' | 'mixed' {
@@ -89,12 +136,32 @@ function convertFixTweetResponse(data: FixTweetAPIResponse, tweetId: string): Tw
     }
   }
 
+  // 处理文章类型：提取封面图片作为媒体，文章标题+预览作为文本
+  if (tweet.article) {
+    const coverMedia = tweet.article.cover_media?.media_info;
+    if (coverMedia?.original_img_url && mediaItems.length === 0) {
+      const size = { w: coverMedia.original_img_width, h: coverMedia.original_img_height, resize: 'fit' as const };
+      mediaItems.push({
+        type: 'photo',
+        url: coverMedia.original_img_url,
+        media_url_https: coverMedia.original_img_url,
+        sizes: { large: size, medium: size, small: size, thumb: size },
+      });
+    }
+  }
+
+  // 构建文本：优先使用 tweet.text，如果为空则从文章内容提取完整文本
+  let text = tweet.text;
+  if (!text && tweet.article) {
+    text = buildArticleText(tweet.article);
+  }
+
   return {
     type: mediaItems.length > 0 ? determineMediaType(mediaItems) : 'photo',
     media_items: mediaItems,
     tweet: {
       id: tweetId,
-      text: tweet.text,
+      text,
       created_at: tweet.created_at,
       user: {
         name: tweet.author.name,

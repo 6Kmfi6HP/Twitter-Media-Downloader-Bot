@@ -264,6 +264,9 @@ export async function processDirectDownload(chatId: number, url: string): Promis
 
     if (tweetData.type === 'photo' && !tweetData.media_items.length) {
       console.log('No media items found, sending text only');
+      if (!caption || caption.trim().length === 0) {
+        return { success: false, error: 'No media or text content found in tweet' };
+      }
       await sendMessage(chatId, caption);
       return { success: true };
     }
@@ -323,12 +326,29 @@ export async function processDirectDownload(chatId: number, url: string): Promis
 
     if (mediaGroup.length > 0) {
       console.log('Sending media to Telegram...');
+
+      // Telegram caption 限制 1024 字符，超长内容需要分段发送
+      const CAPTION_LIMIT = 1024;
+      const MESSAGE_LIMIT = 4096;
+      const isLongCaption = caption.length > CAPTION_LIMIT;
+
       if (mediaGroup.length === 1 && mediaGroup[0].type === 'photo') {
         // 对于单张图片使用 sendPhoto
-        await sendPhoto(chatId, mediaGroup[0].media, caption);
+        const photoCaption = isLongCaption ? caption.slice(0, CAPTION_LIMIT - 3) + '...' : caption;
+        await sendPhoto(chatId, mediaGroup[0].media, photoCaption);
       } else {
         // 对于视频或多个媒体项使用 sendMediaGroup
-        await sendMediaGroup(chatId, mediaGroup, caption);
+        const groupCaption = isLongCaption ? caption.slice(0, CAPTION_LIMIT - 3) + '...' : caption;
+        await sendMediaGroup(chatId, mediaGroup, groupCaption);
+      }
+
+      // 如果文本超过 caption 限制，单独发送完整文本消息
+      if (isLongCaption) {
+        // 按 Telegram 消息限制分段发送
+        for (let i = 0; i < caption.length; i += MESSAGE_LIMIT) {
+          const chunk = caption.slice(i, i + MESSAGE_LIMIT);
+          await sendMessage(chatId, chunk);
+        }
       }
     }
 
