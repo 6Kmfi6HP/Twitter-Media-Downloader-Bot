@@ -45,6 +45,8 @@ export interface TwitterTweet {
   quote_count: number;
   favorite_count: number;
   view_count?: number;
+  lang?: string;
+  translated_text?: string;
 }
 
 export interface TwitterResponse {
