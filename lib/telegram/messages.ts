@@ -6,12 +6,111 @@ import type { Message } from '@grammyjs/types';
 import { bot } from './bot';
 import { escapeHtml, truncateForCaption } from './caption';
 
+const TELEGRAM_API_ROOT = 'https://api.telegram.org';
+
+interface TelegramApiResponse<T> {
+  ok: boolean;
+  result?: T;
+  error_code?: number;
+  description?: string;
+}
+
+class TelegramApiRequestError extends Error {
+  constructor(method: string, response: TelegramApiResponse<unknown>) {
+    super(
+      `Call to '${method}' failed! (${response.error_code ?? 'unknown'}: ${
+        response.description ?? 'Unknown Telegram API error'
+      })`
+    );
+    this.name = 'TelegramApiRequestError';
+  }
+}
+
 /** Guards: ensures the bot is initialised before calling the API. */
 function getBot() {
   if (!bot) {
     throw new Error('TELEGRAM_BOT_TOKEN is not set — cannot call Telegram API');
   }
   return bot;
+}
+
+function telegramApiUrl(method: string): string {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  if (!token) {
+    throw new Error('TELEGRAM_BOT_TOKEN is not set — cannot call Telegram API');
+  }
+  return `${TELEGRAM_API_ROOT}/bot${token}/${method}`;
+}
+
+async function parseTelegramResponse<T>(
+  method: string,
+  response: Response
+): Promise<T> {
+  const raw = await response.text();
+  let payload: TelegramApiResponse<T>;
+  try {
+    payload = JSON.parse(raw) as TelegramApiResponse<T>;
+  } catch {
+    throw new Error(
+      `Telegram '${method}' returned a non-JSON response (${response.status} ${response.statusText})`
+    );
+  }
+
+  if (!response.ok || !payload.ok) {
+    throw new TelegramApiRequestError(method, payload);
+  }
+
+  return payload.result as T;
+}
+
+async function postTelegramJson<T>(
+  method: string,
+  payload: Record<string, unknown>
+): Promise<T> {
+  const response = await fetch(telegramApiUrl(method), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  return parseTelegramResponse<T>(method, response);
+}
+
+async function postTelegramForm<T>(
+  method: string,
+  formData: FormData
+): Promise<T> {
+  const response = await fetch(telegramApiUrl(method), {
+    method: 'POST',
+    body: formData,
+  });
+  return parseTelegramResponse<T>(method, response);
+}
+
+function isGrammyNetworkError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  return (
+    error.name === 'HttpError' ||
+    error.message.startsWith('Network request for ')
+  );
+}
+
+async function withNativeTelegramFallback<T>(
+  method: 'sendPhoto' | 'sendMediaGroup',
+  primary: () => Promise<T>,
+  fallback: () => Promise<T>
+): Promise<T> {
+  try {
+    return await primary();
+  } catch (error) {
+    if (!isGrammyNetworkError(error)) throw error;
+    const networkError = error as Error;
+
+    console.warn(`[telegram] grammY ${method} failed; retrying native Bot API`, {
+      name: networkError.name,
+      message: networkError.message,
+    });
+    return fallback();
+  }
 }
 
 /** Maximum characters in a media caption (Telegram Bot API limit). */
@@ -75,14 +174,24 @@ export async function sendPhoto(
   caption?: string,
   options: SendPhotoOptions = {}
 ): Promise<Message.PhotoMessage> {
+  const parseMode = options.parse_mode ?? 'HTML';
   const safeCaption = caption !== undefined
     ? truncateForCaption(escapeHtml(caption), CAPTION_LIMIT)
     : undefined;
 
-  return getBot().api.sendPhoto(chatId, photo, {
-    caption: safeCaption,
-    parse_mode: options.parse_mode ?? 'HTML',
-  });
+  return withNativeTelegramFallback(
+    'sendPhoto',
+    () => getBot().api.sendPhoto(chatId, photo, {
+      caption: safeCaption,
+      parse_mode: parseMode,
+    }),
+    () => postTelegramJson<Message.PhotoMessage>('sendPhoto', {
+      chat_id: chatId,
+      photo,
+      caption: safeCaption,
+      parse_mode: parseMode,
+    })
+  );
 }
 
 /**
@@ -116,7 +225,49 @@ export async function sendMediaGroup(
     return InputMediaBuilder.photo(item.media, itemOpts);
   });
 
-  return getBot().api.sendMediaGroup(chatId, inputMedia);
+  return withNativeTelegramFallback<Message[]>(
+    'sendMediaGroup',
+    () => getBot().api.sendMediaGroup(chatId, inputMedia),
+    () => nativeSendMediaGroup(chatId, media, safeCaption, parseMode)
+  );
+}
+
+async function nativeSendMediaGroup(
+  chatId: number | string,
+  media: MediaItem[],
+  caption: string | undefined,
+  parseMode: 'HTML' | 'MarkdownV2' | 'Markdown'
+): Promise<Message[]> {
+  const hasUploads = media.some((item) => item.type === 'video');
+  const mediaPayload = media.map((item, index) => ({
+    type: item.type,
+    media:
+      item.type === 'video'
+        ? `attach://video${index}`
+        : item.media,
+    caption: index === 0 ? caption : undefined,
+    parse_mode: parseMode,
+  }));
+
+  if (!hasUploads) {
+    return postTelegramJson<Message[]>('sendMediaGroup', {
+      chat_id: chatId,
+      media: mediaPayload,
+    });
+  }
+
+  const formData = new FormData();
+  formData.append('chat_id', String(chatId));
+  formData.append('media', JSON.stringify(mediaPayload));
+
+  media.forEach((item, index) => {
+    if (item.type !== 'video') return;
+    const filename = item.filename || `video${index}.mp4`;
+    const blob = new Blob([new Uint8Array(item.media)], { type: 'video/mp4' });
+    formData.append(`video${index}`, blob, filename);
+  });
+
+  return postTelegramForm<Message[]>('sendMediaGroup', formData);
 }
 
 /**

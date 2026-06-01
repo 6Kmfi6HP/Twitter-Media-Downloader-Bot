@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi, type Mock } from 'vitest';
 import { GrammyError } from 'grammy';
 
 // Mock the bot module so the messages module can be tested without touching
@@ -27,12 +27,30 @@ import {
 } from '../messages';
 import { bot } from '../bot';
 
-const api = bot.api as unknown as {
+const mockedBot = bot as NonNullable<typeof bot>;
+const api = mockedBot.api as unknown as {
   sendMessage: Mock;
   sendPhoto: Mock;
   sendMediaGroup: Mock;
   deleteMessage: Mock;
 };
+const ORIGINAL_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+
+function grammyHttpError(method: string): Error {
+  const error = new Error(`Network request for '${method}' failed!`);
+  error.name = 'HttpError';
+  return error;
+}
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+  if (ORIGINAL_TOKEN === undefined) {
+    delete process.env.TELEGRAM_BOT_TOKEN;
+  } else {
+    process.env.TELEGRAM_BOT_TOKEN = ORIGINAL_TOKEN;
+  }
+});
 
 describe('sendMessage', () => {
   beforeEach(() => {
@@ -85,6 +103,32 @@ describe('sendPhoto', () => {
     expect(call.caption.length).toBe(1024);
     expect(call.caption.endsWith('...')).toBe(true);
   });
+
+  it('falls back to native Bot API when grammY sendPhoto has a network error', async () => {
+    process.env.TELEGRAM_BOT_TOKEN = '123:test-token';
+    api.sendPhoto.mockRejectedValueOnce(grammyHttpError('sendPhoto'));
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ok: true, result: { message_id: 2 } }))
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    await expect(
+      sendPhoto(123, 'https://example.com/x.jpg', 'cap')
+    ).resolves.toEqual({ message_id: 2 });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining('/sendPhoto'),
+      expect.objectContaining({ method: 'POST' })
+    );
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    expect(JSON.parse(init.body as string)).toEqual({
+      chat_id: 123,
+      photo: 'https://example.com/x.jpg',
+      caption: 'cap',
+      parse_mode: 'HTML',
+    });
+  });
 });
 
 describe('sendMediaGroup', () => {
@@ -124,6 +168,40 @@ describe('sendMediaGroup', () => {
     const filename = (fileRef.filename as string) ?? (fileRef._fileName as string);
     expect(filename).toBe('video.mp4');
   });
+
+  it('falls back to native FormData upload when grammY sendMediaGroup has a network error', async () => {
+    process.env.TELEGRAM_BOT_TOKEN = '123:test-token';
+    api.sendMediaGroup.mockRejectedValueOnce(grammyHttpError('sendMediaGroup'));
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ok: true, result: [{ message_id: 3 }] }))
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    await expect(
+      sendMediaGroup(
+        123,
+        [{ type: 'video', media: Buffer.from([1, 2, 3]), filename: 'clip.mp4' }],
+        'cap'
+      )
+    ).resolves.toEqual([{ message_id: 3 }]);
+
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    expect(init.method).toBe('POST');
+    expect(init.body).toBeInstanceOf(FormData);
+
+    const formData = init.body as FormData;
+    expect(formData.get('chat_id')).toBe('123');
+    expect(JSON.parse(formData.get('media') as string)).toEqual([
+      {
+        type: 'video',
+        media: 'attach://video0',
+        caption: 'cap',
+        parse_mode: 'HTML',
+      },
+    ]);
+    expect(formData.get('video0')).toBeInstanceOf(Blob);
+  });
 });
 
 describe('deleteMessage', () => {
@@ -138,12 +216,11 @@ describe('deleteMessage', () => {
 
   it('returns false on GrammyError (e.g. message too old)', async () => {
     api.deleteMessage.mockRejectedValueOnce(
-      new GrammyError('Bad Request: message can\'t be deleted', {
+      new GrammyError('Call to deleteMessage failed', {
         ok: false,
         error_code: 400,
         description: "message can't be deleted",
-        method: 'deleteMessage',
-      } as unknown as Response)
+      }, 'deleteMessage', { chat_id: 123, message_id: 999 })
     );
     await expect(deleteMessage(123, 999)).resolves.toBe(false);
   });
