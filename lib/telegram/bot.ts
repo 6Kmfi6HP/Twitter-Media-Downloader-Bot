@@ -1,14 +1,6 @@
 import { Bot } from 'grammy';
 import { apiThrottler } from '@grammyjs/transformer-throttler';
 
-declare global {
-  // Persists the Bot instance across serverless cold starts. Without this
-  // every webhook invocation would re-create the client and re-register the
-  // throttler, wasting ms on cold paths.
-  // eslint-disable-next-line no-var
-  var __telegramBot: Bot | undefined;
-}
-
 /**
  * Creates a fresh `Bot` instance with the three-tier throttler registered.
  *
@@ -84,20 +76,17 @@ export function createBot(): Bot {
  * When `TELEGRAM_BOT_TOKEN` is missing, `bot` is `undefined` — this avoids
  * throwing at module-load time which makes unit testing impractical.
  *
- * In production the token is always set, so callers can use `bot!` or check
- * at the point of call (e.g. in `messages.ts`).
+ * Keep the singleton module-local rather than on `globalThis`. Next.js can
+ * compile different route handlers into separate bundles; sharing a Bot across
+ * those bundles breaks grammY's `InputFile instanceof` checks for uploads.
  */
 function _initBot(): Bot | undefined {
   if (!process.env.TELEGRAM_BOT_TOKEN) return undefined;
-  if (globalThis.__telegramBot) return globalThis.__telegramBot;
-  const instance = createBot();
-  globalThis.__telegramBot = instance;
-  return instance;
+  return createBot();
 }
 
 /**
- * Singleton bot cached on `globalThis` to survive Vercel cold starts.
- * Importing this module always returns the same instance.
+ * Singleton bot for this module instance. Importing this module from the same
+ * bundle always returns the same instance.
  */
 export const bot: Bot | undefined = _initBot();
-if (bot) globalThis.__telegramBot = bot;

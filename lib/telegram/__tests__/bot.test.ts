@@ -1,14 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
-// We need to reset the module cache between tests so the singleton behavior
-// can be observed, and we need to control the env var.
+// We need to reset the module cache between tests so the module-local singleton
+// behavior can be observed, and we need to control the env var.
 const ORIGINAL_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 
-describe('createBot + bot singleton', () => {
+describe('createBot + module-local bot singleton', () => {
   beforeEach(() => {
-    // Wipe the global singleton so each test gets a fresh evaluation.
-    // eslint-disable-next-line
-    delete (globalThis as any).__telegramBot;
     vi.resetModules();
   });
 
