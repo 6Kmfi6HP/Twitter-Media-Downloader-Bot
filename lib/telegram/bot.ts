@@ -1,6 +1,19 @@
 import { Bot } from 'grammy';
 import { apiThrottler } from '@grammyjs/transformer-throttler';
 
+function telegramFetch(
+  input: Parameters<typeof fetch>[0],
+  init?: Parameters<typeof fetch>[1]
+): ReturnType<typeof fetch> {
+  const { agent: _agent, compress: _compress, ...rest } =
+    (init ?? {}) as RequestInit & { agent?: unknown; compress?: unknown };
+  const requestInit = rest.body
+    ? { ...rest, duplex: 'half' as const }
+    : rest;
+
+  return fetch(input, requestInit as RequestInit);
+}
+
 /**
  * Creates a fresh `Bot` instance with the three-tier throttler registered.
  *
@@ -13,7 +26,15 @@ export function createBot(): Bot {
     throw new Error('TELEGRAM_BOT_TOKEN is not set');
   }
 
-  const bot = new Bot(token);
+  const bot = new Bot(token, {
+    client: {
+      // Use the platform/native fetch implementation instead of grammY's
+      // node-fetch shim. The deployed runtimes already use native fetch for
+      // Twitter/FixTweet successfully, while node-fetch can fail behind some
+      // serverless/container egress layers.
+      fetch: telegramFetch,
+    },
+  });
 
   // Three-tier throttler using Bottleneck groups:
   //   - global  : reservoir 30/s (Telegram free bot broadcast ceiling)

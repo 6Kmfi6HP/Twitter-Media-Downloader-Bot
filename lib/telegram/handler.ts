@@ -21,6 +21,56 @@ export interface DownloadResult {
   error?: string;
 }
 
+function redactSensitive(value: unknown): unknown {
+  if (typeof value !== 'string') return value;
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  let redacted = token ? value.replaceAll(token, '<telegram-token>') : value;
+  redacted = redacted.replace(/bot[0-9]+:[^/\s]+/g, 'bot<telegram-token>');
+  return redacted;
+}
+
+function summarizeError(error: unknown): Record<string, unknown> {
+  if (!(error instanceof Error)) {
+    return { error: redactSensitive(error) };
+  }
+
+  const maybeError = error as Error & {
+    code?: unknown;
+    type?: unknown;
+    status?: unknown;
+    statusText?: unknown;
+    error?: unknown;
+    cause?: unknown;
+  };
+  const nested = maybeError.error;
+  const nestedError = nested instanceof Error
+    ? {
+        name: nested.name,
+        message: redactSensitive(nested.message),
+        code: (nested as Error & { code?: unknown }).code,
+        type: (nested as Error & { type?: unknown }).type,
+        cause: redactSensitive((nested as Error & { cause?: unknown }).cause),
+      }
+    : nested && typeof nested === 'object'
+      ? {
+          status: (nested as { status?: unknown }).status,
+          statusText: (nested as { statusText?: unknown }).statusText,
+          message: redactSensitive((nested as { message?: unknown }).message),
+        }
+      : redactSensitive(nested);
+
+  return {
+    name: error.name,
+    message: redactSensitive(error.message),
+    code: maybeError.code,
+    type: maybeError.type,
+    status: maybeError.status,
+    statusText: maybeError.statusText,
+    cause: redactSensitive(maybeError.cause),
+    nestedError,
+  };
+}
+
 /**
  * Handles an inbound Telegram update. The behaviour mirrors the previous
  * monolithic `lib/telegram.ts`:
@@ -171,6 +221,11 @@ export async function processDirectDownload(
     await dispatchTweet(chatId, tweetData, caption);
     return { success: true };
   } catch (error) {
+    console.error('[telegram] processDirectDownload failed', {
+      chatId,
+      url,
+      error: summarizeError(error),
+    });
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error occurred',
