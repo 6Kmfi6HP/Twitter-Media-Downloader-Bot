@@ -41,8 +41,10 @@ ENV PORT=3000
 RUN addgroup --system --gid 1001 nodejs \
     && adduser --system --uid 1001 nextjs
 
-# Next.js 未启用 standalone，这里复制非 standalone 模式所需运行文件。
-COPY --from=builder /app/public ./public
+# Next.js 未启用 standalone,这里复制非 standalone 模式所需运行文件。
+# 项目当前没有 public/ 目录,直接 COPY 会报 "not found",这里在 runner 里
+# 主动创建一个空目录,等将来真的放入静态资源时再恢复 COPY。
+RUN mkdir -p ./public
 COPY --from=builder /app/.next ./.next
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/package.json ./package.json
