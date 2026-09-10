@@ -26,6 +26,7 @@ import {
   sendLongCaption,
 } from '../messages';
 import { bot } from '../bot';
+import { getTelegramApiRoot, getMaxUploadBytes } from '../limits';
 
 const mockedBot = bot as NonNullable<typeof bot>;
 const api = mockedBot.api as unknown as {
@@ -42,6 +43,8 @@ function grammyHttpError(method: string): Error {
   return error;
 }
 
+const ORIGINAL_API_ROOT = process.env.TELEGRAM_API_ROOT;
+
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
@@ -50,6 +53,49 @@ afterEach(() => {
   } else {
     process.env.TELEGRAM_BOT_TOKEN = ORIGINAL_TOKEN;
   }
+  if (ORIGINAL_API_ROOT === undefined) {
+    delete process.env.TELEGRAM_API_ROOT;
+  } else {
+    process.env.TELEGRAM_API_ROOT = ORIGINAL_API_ROOT;
+  }
+});
+
+
+describe('Telegram API root configuration', () => {
+  const ORIGINAL_API_ROOT = process.env.TELEGRAM_API_ROOT;
+
+  afterEach(() => {
+    if (ORIGINAL_API_ROOT === undefined) {
+      delete process.env.TELEGRAM_API_ROOT;
+    } else {
+      process.env.TELEGRAM_API_ROOT = ORIGINAL_API_ROOT;
+    }
+  });
+
+  it('uses the official API root by default', () => {
+    delete process.env.TELEGRAM_API_ROOT;
+        expect(getTelegramApiRoot()).toBe('https://api.telegram.org');
+  });
+
+  it('uses a configured self-hosted API root', () => {
+    process.env.TELEGRAM_API_ROOT = 'http://localhost:8081';
+        expect(getTelegramApiRoot()).toBe('http://localhost:8081');
+  });
+
+  it('strips a trailing slash from the API root', () => {
+    process.env.TELEGRAM_API_ROOT = 'http://localhost:8081/';
+        expect(getTelegramApiRoot()).toBe('http://localhost:8081');
+  });
+
+  it('picks the official 50MiB limit by default', () => {
+    delete process.env.TELEGRAM_API_ROOT;
+        expect(getMaxUploadBytes()).toBe(50 * 1024 * 1024);
+  });
+
+  it('picks the self-hosted 2000MiB limit when configured', () => {
+    process.env.TELEGRAM_API_ROOT = 'http://localhost:8081';
+        expect(getMaxUploadBytes()).toBe(2000 * 1024 * 1024);
+  });
 });
 
 describe('sendMessage', () => {
@@ -167,6 +213,23 @@ describe('sendMediaGroup', () => {
     const fileRef = arg[0].media as unknown as Record<string, unknown>;
     const filename = (fileRef.filename as string) ?? (fileRef._fileName as string);
     expect(filename).toBe('video.mp4');
+  });
+
+  it('uses configured Telegram API root for native sendPhoto fallback', async () => {
+    process.env.TELEGRAM_BOT_TOKEN = '123:test-token';
+    process.env.TELEGRAM_API_ROOT = 'http://localhost:8081';
+    api.sendPhoto.mockRejectedValueOnce(grammyHttpError('sendPhoto'));
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ok: true, result: { message_id: 2 } }))
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    await sendPhoto(123, 'https://example.com/x.jpg', 'cap');
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      'http://localhost:8081/bot123:test-token/sendPhoto'
+    );
   });
 
   it('falls back to native FormData upload when grammY sendMediaGroup has a network error', async () => {

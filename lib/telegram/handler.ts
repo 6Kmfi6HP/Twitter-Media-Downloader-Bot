@@ -15,6 +15,7 @@ import {
   pickBestMediaUrl,
 } from './formatter';
 import type { TelegramUpdate } from './types';
+import { formatBytes, getMaxUploadBytes } from './limits';
 
 export interface DownloadResult {
   success: boolean;
@@ -109,7 +110,7 @@ export async function processUpdate(update: TelegramUpdate): Promise<void> {
       }
 
       const caption = await formatTweetCaption(tweetData.tweet);
-      await dispatchTweet(chatId, tweetData, caption);
+      await dispatchTweet(chatId, tweetData, caption, url);
     }
 
     // Delete the processing message after a successful run.
@@ -124,6 +125,18 @@ export async function processUpdate(update: TelegramUpdate): Promise<void> {
   }
 }
 
+async function getContentLength(url: string): Promise<number | undefined> {
+  try {
+    const response = await fetch(url, { method: 'HEAD' });
+    const header = response.headers.get('content-length');
+    if (!header) return undefined;
+    const parsed = Number(header);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Routes a tweet to either `sendPhoto` (single photo) or `sendMediaGroup`
  * (video or mixed). For articles with long captions, sends a short caption
@@ -132,7 +145,8 @@ export async function processUpdate(update: TelegramUpdate): Promise<void> {
 async function dispatchTweet(
   chatId: number | string,
   tweetData: TwitterResponse,
-  caption: string
+  caption: string,
+  tweetUrl?: string
 ): Promise<void> {
   const isLongCaption = caption.length > 1024;
   // Article with multiple images: use short caption for media group
@@ -163,6 +177,16 @@ async function dispatchTweet(
     if (item.type === 'video') {
       const url = pickBestMediaUrl(item);
       if (!url) continue;
+
+      const contentLength = await getContentLength(url);
+      if (contentLength !== undefined && contentLength > getMaxUploadBytes()) {
+        await sendMessage(
+          chatId,
+          `⚠️ 视频过大（${formatBytes(contentLength)}），暂不支持直接发送。${tweetUrl ? `请打开原推查看：${tweetUrl}` : '请稍后重试。'}`
+        );
+        continue;
+      }
+
       const res = await fetch(url);
       if (!res.ok) {
         throw new Error(`Failed to download video: ${res.statusText}`);
@@ -218,7 +242,7 @@ export async function processDirectDownload(
       return { success: true };
     }
 
-    await dispatchTweet(chatId, tweetData, caption);
+    await dispatchTweet(chatId, tweetData, caption, url);
     return { success: true };
   } catch (error) {
     console.error('[telegram] processDirectDownload failed', {

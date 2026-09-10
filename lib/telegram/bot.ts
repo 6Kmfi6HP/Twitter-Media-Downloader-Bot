@@ -1,5 +1,6 @@
 import { Bot } from 'grammy';
 import { apiThrottler } from '@grammyjs/transformer-throttler';
+import { getTelegramApiRoot } from './limits';
 
 function telegramFetch(
   input: Parameters<typeof fetch>[0],
@@ -26,8 +27,14 @@ export function createBot(): Bot {
     throw new Error('TELEGRAM_BOT_TOKEN is not set');
   }
 
+  const telegramApiRoot = getTelegramApiRoot();
+  const hasCustomApiRoot = Boolean(process.env.TELEGRAM_API_ROOT?.trim());
+
   const bot = new Bot(token, {
     client: {
+      // Point grammY at a self-hosted Bot API server when configured; otherwise
+      // leave it unset so grammY keeps using api.telegram.org.
+      ...(hasCustomApiRoot ? { apiRoot: telegramApiRoot } : {}),
       // Use the platform/native fetch implementation instead of grammY's
       // node-fetch shim. The deployed runtimes already use native fetch for
       // Twitter/FixTweet successfully, while node-fetch can fail behind some

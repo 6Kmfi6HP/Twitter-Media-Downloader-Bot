@@ -5,8 +5,7 @@ import {
 import type { Message } from '@grammyjs/types';
 import { bot } from './bot';
 import { escapeHtml, truncateForCaption } from './caption';
-
-const TELEGRAM_API_ROOT = 'https://api.telegram.org';
+import { getTelegramApiRoot } from './limits';
 
 interface TelegramApiResponse<T> {
   ok: boolean;
@@ -39,7 +38,7 @@ function telegramApiUrl(method: string): string {
   if (!token) {
     throw new Error('TELEGRAM_BOT_TOKEN is not set — cannot call Telegram API');
   }
-  return `${TELEGRAM_API_ROOT}/bot${token}/${method}`;
+  return `${getTelegramApiRoot()}/bot${token}/${method}`;
 }
 
 async function parseTelegramResponse<T>(
