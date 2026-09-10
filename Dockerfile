@@ -4,11 +4,17 @@
 FROM node:20-bookworm-slim AS deps
 WORKDIR /app
 
-# 只先拷贝依赖清单，利于 Docker layer cache。
+# better-sqlite3 在 slim 镜像里找不到 prebuilt,需要 fallback 到 node-gyp,
+# 因此提前安装 python3 / 编译工具链。runner 镜像不继承这一层,不会变大。
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends python3 make g++ \
+ && rm -rf /var/lib/apt/lists/*
+
+# 只先拷贝依赖清单,利于 Docker layer cache。
 COPY package.json package-lock.json ./
 
 # 安装全部依赖。
-# grammY 会带 node-fetch，但项目运行时已通过 client.fetch 使用 native fetch。
+# grammY 会带 node-fetch,但项目运行时已通过 client.fetch 使用 native fetch。
 RUN npm ci
 
 # ----- builder -----
