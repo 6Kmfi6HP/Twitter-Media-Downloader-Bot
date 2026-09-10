@@ -16,6 +16,7 @@ import {
 } from './formatter';
 import type { TelegramUpdate } from './types';
 import { formatBytes, getMaxUploadBytes } from './limits';
+import { isMtprotoConfigured, sendMediaGroupViaMtproto } from './mtproto';
 
 export interface DownloadResult {
   success: boolean;
@@ -171,32 +172,103 @@ async function dispatchTweet(
   // Mixed / video: build a media group. Videos must be downloaded to a
   // Buffer first because Telegram's media group endpoint requires real
   // multipart data for video files.
-  const media: MediaItem[] = [];
+  //
+  // Two-pass build:
+  //  1. First iterate and compute sizes (HEAD) for every video so we can
+  //     decide whether the entire group must be routed over MTProto.
+  //  2. Then either upload everything through mtcute (when any item exceeds
+  //     the Bot API limit and MTProto is configured), or fall through to the
+  //     existing Bot API path that skips oversized items individually.
+  interface SizedItem {
+    item: (typeof tweetData.media_items)[number];
+    url: string | undefined;
+    size: number | undefined;
+  }
+  const sized: SizedItem[] = [];
   const videoFilename = `TG@haren2024_${tweetData.tweet.id}.mp4`;
-  for (const item of tweetData.media_items) {
-    if (item.type === 'video') {
-      const url = pickBestMediaUrl(item);
-      if (!url) continue;
 
-      const contentLength = await getContentLength(url);
-      if (contentLength !== undefined && contentLength > getMaxUploadBytes()) {
+  for (const item of tweetData.media_items) {
+    const url = pickBestMediaUrl(item);
+    if (!url) continue;
+    if (item.type === 'video') {
+      sized.push({ item, url, size: await getContentLength(url) });
+    } else {
+      sized.push({ item, url, size: undefined });
+    }
+  }
+
+  const maxBytes = getMaxUploadBytes();
+  const hasOversizedVideo = sized.some(
+    (entry) =>
+      entry.item.type === 'video' &&
+      entry.size !== undefined &&
+      entry.size > maxBytes
+  );
+
+  // MTProto path: only when the configuration is present *and* at least one
+  // video exceeds the Bot API limit. Group always goes through MTProto as a
+  // whole so Telegram renders one album for the tweet.
+  if (hasOversizedVideo && isMtprotoConfigured()) {
+    const mediaForMtproto: MediaItem[] = [];
+    for (const entry of sized) {
+      try {
+        if (entry.item.type === 'video') {
+          const res = await fetch(entry.url!);
+          if (!res.ok) continue;
+          mediaForMtproto.push({
+            type: 'video',
+            media: Buffer.from(await res.arrayBuffer()),
+            filename: videoFilename,
+          });
+        } else {
+          mediaForMtproto.push({ type: 'photo', media: entry.url! });
+        }
+      } catch (err) {
+        console.warn('[telegram] failed to download media for mtproto', {
+          url: entry.url,
+          err,
+        });
+      }
+    }
+
+    if (mediaForMtproto.length > 0) {
+      try {
+        await sendMediaGroupViaMtproto(chatId, mediaForMtproto, caption);
+        if (isLongCaption) {
+          await sendLongCaption(chatId, caption);
+        }
+        return;
+      } catch (err) {
+        console.error(
+          '[telegram] mtproto sendMediaGroup failed, falling back to Bot API',
+          err
+        );
+        // fall through to Bot API path
+      }
+    }
+  }
+
+  // Bot API path (existing behaviour): skip videos that exceed the limit,
+  // send the rest via grammY.
+  const media: MediaItem[] = [];
+  for (const entry of sized) {
+    if (entry.item.type === 'video') {
+      if (entry.size !== undefined && entry.size > maxBytes) {
         await sendMessage(
           chatId,
-          `⚠️ 视频过大（${formatBytes(contentLength)}），暂不支持直接发送。${tweetUrl ? `请打开原推查看：${tweetUrl}` : '请稍后重试。'}`
+          `⚠️ 视频过大（${formatBytes(entry.size)}），暂不支持直接发送。${tweetUrl ? `请打开原推查看：${tweetUrl}` : '请稍后重试。'}`
         );
         continue;
       }
 
-      const res = await fetch(url);
+      const res = await fetch(entry.url!);
       if (!res.ok) {
         throw new Error(`Failed to download video: ${res.statusText}`);
       }
       const buf = Buffer.from(await res.arrayBuffer());
       media.push({ type: 'video', media: buf, filename: videoFilename });
     } else {
-      const url = pickBestMediaUrl(item);
-      if (!url) continue;
-      media.push({ type: 'photo', media: url });
+      media.push({ type: 'photo', media: entry.url! });
     }
   }
 

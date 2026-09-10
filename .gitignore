@@ -34,3 +34,6 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 .env
+
+# mtcute session persistence (bot login state — sensitive, machine-local)
+.mtcute-session.sqlite

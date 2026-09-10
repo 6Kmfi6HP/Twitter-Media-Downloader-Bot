@@ -13,6 +13,7 @@
   "dependencies": {
     "@grammyjs/transformer-throttler": "^1.2.1",
     "@hookform/resolvers": "^3.9.0",
+    "@mtcute/node": "^0.32.1",
     "@next/swc-wasm-nodejs": "13.5.1",
     "@radix-ui/react-accordion": "^1.2.0",
     "@radix-ui/react-alert-dialog": "^1.1.1",
@@ -74,7 +75,11 @@
   "devDependencies": {
     "@types/node": "^22.10.2",
     "@vitest/coverage-v8": "^4.1.7",
+    "tsx": "^4.23.13",
     "typescript": "^5.7.2",
     "vitest": "^4.1.7"
+  },
+  "allowScripts": {
+    "better-sqlite3@12.11.1": true
   }
 }
