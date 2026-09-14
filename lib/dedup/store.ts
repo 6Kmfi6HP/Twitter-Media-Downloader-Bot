@@ -1,3 +1,5 @@
+import os from 'node:os';
+import path from 'node:path';
 import Database from 'better-sqlite3';
 
 export type DedupKind = 'tweet' | 'upd';
@@ -61,7 +63,11 @@ let sweeper: NodeJS.Timeout | null = null;
 
 function resolveDbPath(): string {
   if (dbPathOverride) return dbPathOverride;
-  return process.env.DEDUP_DB_PATH || './.dedup.sqlite';
+  if (process.env.DEDUP_DB_PATH) return process.env.DEDUP_DB_PATH;
+  // 默认放系统临时目录：Docker runner 以非 root 用户(nextjs)运行，/app 只读，
+  // CWD 下的 './.dedup.sqlite' 会报 SQLITE_CANTOPEN；/tmp 必然可写。
+  // 去重本就是短窗口临时状态，容器重启即清空是设计上可接受的取舍。
+  return path.join(os.tmpdir(), 'twitter-media-dl-dedup.sqlite');
 }
 
 function getDb(): Database.Database {
