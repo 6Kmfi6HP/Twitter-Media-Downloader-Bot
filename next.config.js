@@ -8,7 +8,7 @@ const nextConfig = {
   // (better-sqlite3). Tell Next.js to leave it as an external `require` in
   // the server bundle instead of trying to bundle it.
   experimental: {
-    serverComponentsExternalPackages: ['@mtcute/node', '@mtcute/core', '@mtcute/html-parser'],
+    serverComponentsExternalPackages: ['@mtcute/node', '@mtcute/core', '@mtcute/html-parser', 'better-sqlite3'],
   },
   webpack: (config) => {
     // grammY pulls in node-fetch, whose optional `encoding` dependency is not

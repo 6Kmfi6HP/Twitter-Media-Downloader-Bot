@@ -1,4 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 vi.mock('../messages', () => ({
   sendMessage: vi.fn(),
@@ -36,12 +39,16 @@ import {
   isMtprotoConfigured,
   sendMediaGroupViaMtproto,
 } from '../mtproto';
+import { setDbPathForTests, resetDbForTests } from '../../dedup/store';
+import { resetInflightForTests } from '../../dedup/guard';
 
 const mockedSendMessage = sendMessage as unknown as ReturnType<typeof vi.fn>;
 const mockedSendMediaGroup = sendMediaGroup as unknown as ReturnType<typeof vi.fn>;
 const mockedDownload = downloadTwitterMedia as unknown as ReturnType<typeof vi.fn>;
 const mockedIsConfigured = isMtprotoConfigured as unknown as ReturnType<typeof vi.fn>;
 const mockedSendViaMtproto = sendMediaGroupViaMtproto as unknown as ReturnType<typeof vi.fn>;
+
+let tmpDir: string;
 
 const UNDER_LIMIT = 10 * 1024 * 1024;   // 10 MB
 const OVER_LIMIT = 60 * 1024 * 1024;    // 60 MB (>50 MB Bot API cap)
@@ -92,11 +99,17 @@ function stubFetchWithSizes(sizes: Record<string, number>) {
 beforeEach(() => {
   vi.clearAllMocks();
   process.env.TELEGRAM_BOT_TOKEN = '123:test-token';
+  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dedup-mtproto-'));
+  setDbPathForTests(path.join(tmpDir, 'mt.sqlite'));
+  resetInflightForTests();
   mockedSendMessage.mockResolvedValue({ message_id: 1 });
   mockedSendMediaGroup.mockResolvedValue([]);
 });
 
 afterEach(() => {
+  resetInflightForTests();
+  resetDbForTests();
+  fs.rmSync(tmpDir, { recursive: true, force: true });
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });

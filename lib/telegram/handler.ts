@@ -1,4 +1,6 @@
 import { extractUrls } from '../utils';
+import { withTweetDedup } from '../dedup/guard';
+import { claim } from '../dedup/store';
 import { downloadTwitterMedia } from '../twitter';
 import type { TwitterMediaItem, TwitterResponse } from '../twitter/types';
 import {
@@ -21,6 +23,7 @@ import { isMtprotoConfigured, sendMediaGroupViaMtproto } from './mtproto';
 export interface DownloadResult {
   success: boolean;
   error?: string;
+  dedup?: 'done' | 'processing' | 'failed';
 }
 
 function redactSensitive(value: unknown): unknown {
@@ -86,6 +89,12 @@ export async function processUpdate(update: TelegramUpdate): Promise<void> {
   const message = update.message;
   if (!message?.text) return;
 
+  // Telegram 会在超时后重投同一个 update；用 update_id 去重，多次重投静默丢弃。
+  if (update.update_id !== undefined) {
+    const updClaim = claim(`upd:${update.update_id}`, 'upd');
+    if (updClaim.role === 'duplicate') return;
+  }
+
   const chatId = message.chat.id;
   const text = message.text;
 
@@ -103,15 +112,45 @@ export async function processUpdate(update: TelegramUpdate): Promise<void> {
 
   try {
     for (const url of twitterUrls) {
-      const tweetData = await downloadTwitterMedia(url);
+      const dedup = await withTweetDedup(url, { chatId, waitMs: 0 }, async () => {
+        const tweetData = await downloadTwitterMedia(url);
 
-      if (tweetData.media_items.length === 0) {
-        await sendMessage(chatId, '未找到媒体内容。');
+        if (tweetData.media_items.length === 0) {
+          await sendMessage(chatId, '未找到媒体内容。');
+          return;
+        }
+
+        const caption = await formatTweetCaption(tweetData.tweet);
+        await dispatchTweet(chatId, tweetData, caption, url);
+      });
+
+      if (dedup.outcome === 'reused-done') {
+        const hint = await sendMessage(chatId, '该推文刚刚已处理，已跳过重复请求。');
+        setTimeout(() => {
+          void deleteMessage(chatId, hint.message_id);
+        }, 5000);
         continue;
       }
 
-      const caption = await formatTweetCaption(tweetData.tweet);
-      await dispatchTweet(chatId, tweetData, caption, url);
+      if (dedup.outcome === 'in-progress') {
+        const hint = await sendMessage(chatId, '该推文正在下载中，请稍候，完成后会忽略重复请求。');
+        setTimeout(() => {
+          void deleteMessage(chatId, hint.message_id);
+        }, 5000);
+        continue;
+      }
+
+      if (dedup.outcome === 'recently-failed') {
+        // 走现有错误提示路径：报错并 5 秒后自动删除处理消息，中止后续 URL。
+        console.error('Error processing tweet (recently failed):', dedup.error);
+        await sendMessage(chatId, '处理媒体内容时出错，请稍后重试。');
+        setTimeout(() => {
+          void deleteMessage(chatId, processingMsg.message_id);
+        }, 5000);
+        return;
+      }
+
+      // executed：原样，已在内层 run 中完成发送。
     }
 
     // Delete the processing message after a successful run.
@@ -302,30 +341,51 @@ export async function processDirectDownload(
   chatId: number | string,
   url: string
 ): Promise<DownloadResult> {
-  try {
-    const tweetData = await downloadTwitterMedia(url);
-    const caption = await formatTweetCaption_without_name(tweetData.tweet);
+  const rawWait = Number(process.env.DEDUP_WAIT_MS);
+  const waitMs = Number.isFinite(rawWait) && rawWait > 0 ? rawWait : 45_000;
 
-    if (tweetData.type === 'photo' && tweetData.media_items.length === 0) {
-      if (!caption || caption.trim().length === 0) {
-        return { success: false, error: 'No media or text content found in tweet' };
+  const dedup = await withTweetDedup(url, { chatId: typeof chatId === 'number' ? chatId : undefined, waitMs }, async (): Promise<DownloadResult> => {
+    try {
+      const tweetData = await downloadTwitterMedia(url);
+      const caption = await formatTweetCaption_without_name(tweetData.tweet);
+
+      if (tweetData.type === 'photo' && tweetData.media_items.length === 0) {
+        if (!caption || caption.trim().length === 0) {
+          return { success: false, error: 'No media or text content found in tweet' };
+        }
+        await sendMessage(chatId, caption);
+        return { success: true };
       }
-      await sendMessage(chatId, caption);
-      return { success: true };
-    }
 
-    await dispatchTweet(chatId, tweetData, caption, url);
-    return { success: true };
-  } catch (error) {
-    console.error('[telegram] processDirectDownload failed', {
-      chatId,
-      url,
-      error: summarizeError(error),
-    });
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : 'Unknown error occurred',
-    };
+      await dispatchTweet(chatId, tweetData, caption, url);
+      return { success: true };
+    } catch (error) {
+      console.error('[telegram] processDirectDownload failed', {
+        chatId,
+        url,
+        error: summarizeError(error),
+      });
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error occurred',
+      };
+    }
+  });
+
+  switch (dedup.outcome) {
+    case 'executed':
+      // 原样返回（不带 dedup）。
+      return dedup.result ?? { success: true };
+    case 'reused-done':
+      return { success: true, dedup: 'done' };
+    case 'in-progress':
+      return { success: true, dedup: 'processing' };
+    case 'recently-failed':
+      return {
+        success: false,
+        dedup: 'failed',
+        error: dedup.error || 'Unknown error occurred',
+      };
   }
 }
 

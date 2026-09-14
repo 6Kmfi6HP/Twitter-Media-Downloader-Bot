@@ -37,3 +37,6 @@ next-env.d.ts
 
 # mtcute session persistence (bot login state — sensitive, machine-local)
 .mtcute-session.sqlite
+
+# dedup sqlite database (runtime state, machine-local)
+.dedup.sqlite*

@@ -1,4 +1,5 @@
 import type { TwitterResponse, TwitterMediaItem } from './types';
+import { TWEET_STATUS_URL_RE } from '../utils';
 
 const FIXTWEET_API_BASE = 'https://api.fxtwitter.com';
 
@@ -75,9 +76,11 @@ interface FixTweetAPIResponse {
 }
 
 function extractTweetInfo(url: string): { tweetId: string | null; screenName: string | null } {
-  const match = url.match(/(?:twitter|x)\.com\/(\w+)\/status\/(\d+)/);
+  // 覆盖 user/status、i/web/status、i/status 三种形态；i 形态下 screenName 为 null，
+  // 后续走 getTweetDetails(tweetId, screenName || 'status') 的兜底路径。
+  const match = url.match(TWEET_STATUS_URL_RE);
   if (match) {
-    return { screenName: match[1], tweetId: match[2] };
+    return { screenName: match[1] ?? null, tweetId: match[2] };
   }
   return { tweetId: null, screenName: null };
 }

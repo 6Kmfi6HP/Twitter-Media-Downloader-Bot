@@ -1,4 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 vi.mock('../messages', () => ({
   sendMessage: vi.fn(),
@@ -22,6 +25,10 @@ import { processDirectDownload } from '../handler';
 import { sendMessage } from '../messages';
 import { formatTweetCaption_without_name } from '../formatter';
 import { downloadTwitterMedia } from '../../twitter';
+import { setDbPathForTests, resetDbForTests } from '../../dedup/store';
+import { resetInflightForTests } from '../../dedup/guard';
+
+let tmpDir: string;
 
 const mockedSendMessage = sendMessage as unknown as ReturnType<typeof vi.fn>;
 const mockedFormat = formatTweetCaption_without_name as unknown as ReturnType<typeof vi.fn>;
@@ -44,10 +51,16 @@ function mockVideoTweet(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dedup-handler-base-'));
+  setDbPathForTests(path.join(tmpDir, 'h.sqlite'));
+  resetInflightForTests();
   mockedFormat.mockResolvedValue('caption');
 });
 
 afterEach(() => {
+  resetInflightForTests();
+  resetDbForTests();
+  fs.rmSync(tmpDir, { recursive: true, force: true });
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });

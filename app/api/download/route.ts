@@ -27,10 +27,33 @@ export async function POST(req: Request) {
     const downloadResult: DownloadResult = await processDirectDownload(Number(chatId), url);
     
     if (!downloadResult.success) {
+      if (downloadResult.dedup === 'failed') {
+        console.log('Download recently failed (dedup):', downloadResult.error);
+        return NextResponse.json(
+          { ok: false, dedup: 'failed', error: downloadResult.error || 'Download failed' },
+          { status: 409 }
+        );
+      }
       console.log('Download process failed:', downloadResult.error);
       return NextResponse.json(
         { ok: false, error: downloadResult.error || 'Download failed' },
         { status: 400 }
+      );
+    }
+
+    if (downloadResult.dedup === 'done') {
+      console.log('Download already processed recently (dedup: done)');
+      return NextResponse.json(
+        { ok: true, dedup: 'done', message: 'already processed recently' },
+        { status: 200 }
+      );
+    }
+
+    if (downloadResult.dedup === 'processing') {
+      console.log('Download already in progress (dedup: processing)');
+      return NextResponse.json(
+        { ok: true, dedup: 'processing' },
+        { status: 202 }
       );
     }
 

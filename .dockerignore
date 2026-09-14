@@ -7,3 +7,5 @@ coverage
 *.pem
 npm-debug.log*
 .DS_Store
+.dedup.sqlite*
+.mtcute-session.sqlite
