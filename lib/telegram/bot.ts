@@ -6,7 +6,12 @@ function telegramFetch(
   input: Parameters<typeof fetch>[0],
   init?: Parameters<typeof fetch>[1]
 ): ReturnType<typeof fetch> {
-  const { agent: _agent, compress: _compress, ...rest } =
+  // signal 一并剥离：Next 服务端运行时对 fetch 打了补丁,grammY 传入的
+  // AbortSignal 实例与补丁实现里的 AbortSignal 类存在跨 realm 的类身份问题
+  // (RequestInit: Expected signal ... to be an instance of AbortSignal),
+  // 会导致所有 grammY 调用在网络层之前就抛 TypeError。代价是 grammY 的
+  // 客户端超时(默认 500s)不再取消请求,对本服务可接受。
+  const { agent: _agent, compress: _compress, signal: _signal, ...rest } =
     (init ?? {}) as RequestInit & { agent?: unknown; compress?: unknown };
   const requestInit = rest.body
     ? { ...rest, duplex: 'half' as const }
