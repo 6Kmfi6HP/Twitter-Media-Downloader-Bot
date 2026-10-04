@@ -12,7 +12,6 @@ vi.mock('../messages', () => ({
 }));
 
 vi.mock('../formatter', () => ({
-  formatTweetCaption: vi.fn(async () => 'caption'),
   formatTweetCaption_without_name: vi.fn(async () => 'caption'),
   pickBestMediaUrl: vi.fn((item: { variants?: Array<{ url?: string }> }) => item.variants?.[0]?.url ?? ''),
 }));

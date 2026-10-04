@@ -1,6 +1,4 @@
-import { extractUrls } from '../utils';
 import { withTweetDedup } from '../dedup/guard';
-import { claim } from '../dedup/store';
 import { downloadTwitterMedia } from '../twitter';
 import type { TwitterMediaItem, TwitterResponse } from '../twitter/types';
 import {
@@ -8,15 +6,12 @@ import {
   sendPhoto,
   sendMediaGroup,
   sendLongCaption,
-  deleteMessage,
   type MediaItem,
 } from './messages';
 import {
-  formatTweetCaption,
   formatTweetCaption_without_name,
   pickBestMediaUrl,
 } from './formatter';
-import type { TelegramUpdate } from './types';
 import { formatBytes, getMaxUploadBytes } from './limits';
 import { isMtprotoConfigured, sendMediaGroupViaMtproto } from './mtproto';
 
@@ -74,95 +69,6 @@ function summarizeError(error: unknown): Record<string, unknown> {
     cause: redactSensitive(maybeError.cause),
     nestedError,
   };
-}
-
-/**
- * Handles an inbound Telegram update. The behaviour mirrors the previous
- * monolithic `lib/telegram.ts`:
- *  1. Extract Twitter/X URLs from the message text.
- *  2. Send a "processing" message; delete it on success or auto-delete the
- *     error message after 5 seconds.
- *  3. For each URL, fetch the tweet and dispatch a single photo or a media
- *     group (with video support via `InputFile`).
- */
-export async function processUpdate(update: TelegramUpdate): Promise<void> {
-  const message = update.message;
-  if (!message?.text) return;
-
-  // Telegram 会在超时后重投同一个 update；用 update_id 去重，多次重投静默丢弃。
-  if (update.update_id !== undefined) {
-    const updClaim = claim(`upd:${update.update_id}`, 'upd');
-    if (updClaim.role === 'duplicate') return;
-  }
-
-  const chatId = message.chat.id;
-  const text = message.text;
-
-  const urls = extractUrls(text);
-  const twitterUrls = urls.filter(
-    (url) => url.includes('twitter.com') || url.includes('x.com')
-  );
-
-  if (twitterUrls.length === 0) {
-    await sendMessage(chatId, '请发送Twitter/X链接以下载媒体内容。');
-    return;
-  }
-
-  const processingMsg = await sendMessage(chatId, '正在处理您的请求...');
-
-  try {
-    for (const url of twitterUrls) {
-      const dedup = await withTweetDedup(url, { chatId, waitMs: 0 }, async () => {
-        const tweetData = await downloadTwitterMedia(url);
-
-        if (tweetData.media_items.length === 0) {
-          await sendMessage(chatId, '未找到媒体内容。');
-          return;
-        }
-
-        const caption = await formatTweetCaption(tweetData.tweet);
-        await dispatchTweet(chatId, tweetData, caption, url);
-      });
-
-      if (dedup.outcome === 'reused-done') {
-        const hint = await sendMessage(chatId, '该推文刚刚已处理，已跳过重复请求。');
-        setTimeout(() => {
-          void deleteMessage(chatId, hint.message_id);
-        }, 5000);
-        continue;
-      }
-
-      if (dedup.outcome === 'in-progress') {
-        const hint = await sendMessage(chatId, '该推文正在下载中，请稍候，完成后会忽略重复请求。');
-        setTimeout(() => {
-          void deleteMessage(chatId, hint.message_id);
-        }, 5000);
-        continue;
-      }
-
-      if (dedup.outcome === 'recently-failed') {
-        // 走现有错误提示路径：报错并 5 秒后自动删除处理消息，中止后续 URL。
-        console.error('Error processing tweet (recently failed):', dedup.error);
-        await sendMessage(chatId, '处理媒体内容时出错，请稍后重试。');
-        setTimeout(() => {
-          void deleteMessage(chatId, processingMsg.message_id);
-        }, 5000);
-        return;
-      }
-
-      // executed：原样，已在内层 run 中完成发送。
-    }
-
-    // Delete the processing message after a successful run.
-    await deleteMessage(chatId, processingMsg.message_id);
-  } catch (error) {
-    console.error('Error processing tweet:', error);
-    // Tell the user something went wrong; auto-cleanup after 5 s.
-    await sendMessage(chatId, '处理媒体内容时出错，请稍后重试。');
-    setTimeout(() => {
-      void deleteMessage(chatId, processingMsg.message_id);
-    }, 5000);
-  }
 }
 
 async function getContentLength(url: string): Promise<number | undefined> {

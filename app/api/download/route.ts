@@ -1,12 +1,12 @@
 import { NextResponse } from 'next/server';
-import { processDirectDownload, type DownloadResult } from '@/lib/telegram';
+import { enqueueAndWait } from '@/lib/queue';
 
 export async function POST(req: Request) {
   try {
     console.log('Starting download process...');
     const { chatId, url } = await req.json();
     console.log('Received parameters:', { chatId, url });
-    
+
     if (!chatId || !url) {
       console.log('Missing required parameters:', { chatId, url });
       return NextResponse.json(
@@ -23,25 +23,35 @@ export async function POST(req: Request) {
       );
     }
 
-    console.log('Starting direct download process for:', { chatId, url });
-    const downloadResult: DownloadResult = await processDirectDownload(Number(chatId), url);
-    
-    if (!downloadResult.success) {
-      if (downloadResult.dedup === 'failed') {
-        console.log('Download recently failed (dedup):', downloadResult.error);
+    console.log('Enqueuing download job for:', { chatId, url });
+    // 队列模式:先进队列由 worker 消费,同步等待终态以保持对外契约不变。
+    // 超时(默认 8 分钟)返回 202,任务继续在后台执行。
+    const outcome = await enqueueAndWait(Number(chatId), url);
+
+    if (outcome.status === 'queued') {
+      console.log('Job still running past wait timeout, returning 202');
+      return NextResponse.json(
+        { ok: true, dedup: 'processing', queued: true },
+        { status: 202 }
+      );
+    }
+
+    if (outcome.status === 'failed') {
+      if (outcome.dedup === 'failed') {
+        console.log('Download recently failed (dedup):', outcome.error);
         return NextResponse.json(
-          { ok: false, dedup: 'failed', error: downloadResult.error || 'Download failed' },
+          { ok: false, dedup: 'failed', error: outcome.error || 'Download failed' },
           { status: 409 }
         );
       }
-      console.log('Download process failed:', downloadResult.error);
+      console.log('Download process failed:', outcome.error);
       return NextResponse.json(
-        { ok: false, error: downloadResult.error || 'Download failed' },
+        { ok: false, error: outcome.error || 'Download failed' },
         { status: 400 }
       );
     }
 
-    if (downloadResult.dedup === 'done') {
+    if (outcome.dedup === 'done') {
       console.log('Download already processed recently (dedup: done)');
       return NextResponse.json(
         { ok: true, dedup: 'done', message: 'already processed recently' },
@@ -49,7 +59,7 @@ export async function POST(req: Request) {
       );
     }
 
-    if (downloadResult.dedup === 'processing') {
+    if (outcome.dedup === 'processing') {
       console.log('Download already in progress (dedup: processing)');
       return NextResponse.json(
         { ok: true, dedup: 'processing' },

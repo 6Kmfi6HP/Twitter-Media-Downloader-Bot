@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -12,7 +12,6 @@ vi.mock('../messages', () => ({
 }));
 
 vi.mock('../formatter', () => ({
-  formatTweetCaption: vi.fn(async () => 'caption'),
   formatTweetCaption_without_name: vi.fn(async () => 'caption'),
   pickBestMediaUrl: vi.fn((item: { variants?: Array<{ url?: string }>; media_url_https?: string }) => item.variants?.[0]?.url ?? item.media_url_https ?? ''),
 }));
@@ -21,14 +20,14 @@ vi.mock('../../twitter', () => ({
   downloadTwitterMedia: vi.fn(),
 }));
 
-import { processUpdate, processDirectDownload } from '../handler';
+import { processDirectDownload } from '../handler';
 import { sendMessage } from '../messages';
 import { downloadTwitterMedia } from '../../twitter';
 import { setDbPathForTests, resetDbForTests } from '../../dedup/store';
 import { resetInflightForTests } from '../../dedup/guard';
 
-const mockedSendMessage = sendMessage as unknown as ReturnType<typeof vi.fn>;
-const mockedDownload = downloadTwitterMedia as unknown as ReturnType<typeof vi.fn>;
+const mockedSendMessage = sendMessage as unknown as Mock;
+const mockedDownload = downloadTwitterMedia as unknown as Mock;
 
 let tmpDir: string;
 
@@ -37,9 +36,7 @@ function photoTweet() {
     type: 'photo',
     media_items: [{
       type: 'photo',
-      url: 'https://example.com/p.jpg',
-      media_url_https: 'https://example.com/p.jpg',
-      sizes: { large: { w: 1, h: 1, resize: 'fit' }, medium: { w: 1, h: 1, resize: 'fit' }, small: { w: 1, h: 1, resize: 'fit' }, thumb: { w: 1, h: 1, resize: 'fit' } },
+      media_url_https: 'https://pbs.twimg.com/media/x.jpg',
     }],
     tweet: { id: '123', text: 'hi', created_at: '', user: { name: 'n', screen_name: 's' }, reply_count: 0, retweet_count: 0, quote_count: 0, favorite_count: 0 },
   };
@@ -63,41 +60,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe('processUpdate webhook 重投去重', () => {
-  it('相同 update_id 的 webhook 重放 → 第二次不下载、不发送任何消息', async () => {
-    const update = {
-      update_id: 42,
-      message: { message_id: 1, chat: { id: 123 }, text: 'https://x.com/user/status/123' },
-    };
-
-    await processUpdate(update);
-    expect(mockedDownload).toHaveBeenCalledTimes(1);
-
-    const sendCountBefore = mockedSendMessage.mock.calls.length;
-    await processUpdate(update);
-
-    expect(mockedDownload).toHaveBeenCalledTimes(1);
-    expect(mockedSendMessage.mock.calls.length).toBe(sendCountBefore);
-  });
-
-  it('窗口内同 URL 不同消息 → 跳过管线并发短提示', async () => {
-    const m1 = {
-      update_id: 100,
-      message: { message_id: 1, chat: { id: 123 }, text: 'https://x.com/user/status/123' },
-    };
-    const m2 = {
-      update_id: 200,
-      message: { message_id: 2, chat: { id: 123 }, text: 'https://x.com/user/status/123' },
-    };
-
-    await processUpdate(m1);
-    expect(mockedDownload).toHaveBeenCalledTimes(1);
-
-    await processUpdate(m2);
-    expect(mockedDownload).toHaveBeenCalledTimes(1);
-    expect(mockedSendMessage).toHaveBeenCalledWith(123, '该推文刚刚已处理，已跳过重复请求。');
-  });
-
+describe('processDirectDownload 去重', () => {
   it('并发 10 个 processDirectDownload 同 URL（真实临时 DB）→ 只下载 1 次，其余 dedup done', async () => {
     const url = 'https://x.com/user/status/999';
     const results = await Promise.all(
@@ -118,15 +81,6 @@ describe('processUpdate webhook 重投去重', () => {
     expect(res.dedup).toBeUndefined();
     expect(res.error).toBe('PRIVATE_TWEET');
   });
-
-  it('processUpdate owner run 抛错 → 走外层 catch 发错误提示（不吞掉）', async () => {
-    mockedDownload.mockRejectedValue(new Error('NOT_FOUND'));
-    await processUpdate({
-      update_id: 300,
-      message: { message_id: 1, chat: { id: 123 }, text: 'https://x.com/user/status/123' },
-    });
-    expect(mockedSendMessage).toHaveBeenCalledWith(123, '处理媒体内容时出错，请稍后重试。');
-  });
 });
 
 describe('processDirectDownload 等待超时（真实定时器）', () => {
@@ -141,20 +95,23 @@ describe('processDirectDownload 等待超时（真实定时器）', () => {
       release = resolve;
     });
     mockedDownload.mockImplementation(async () => {
-      await gate; // owner 阻塞，直到手动放行
+      await gate;
       return photoTweet();
     });
 
     try {
-      // owner 同步 claim 后才 await run，因此紧随其后的调用是等待者。
-      const ownerPromise = processDirectDownload(123, 'https://x.com/user/status/777');
+      const url = 'https://x.com/user/status/777';
+      const owner = processDirectDownload(123, url);
+      const waiter = processDirectDownload(123, url);
 
-      const waiterRes = await processDirectDownload(123, 'https://x.com/user/status/777');
-      expect(waiterRes).toEqual({ success: true, dedup: 'processing' });
+      const waiterResult = await waiter;
+      expect(waiterResult.success).toBe(true);
+      expect(waiterResult.dedup).toBe('processing');
 
       release();
-      const ownerRes = await ownerPromise;
-      expect(ownerRes).toEqual({ success: true });
+      const ownerResult = await owner;
+      expect(ownerResult.success).toBe(true);
+      expect(ownerResult.dedup).toBeUndefined();
     } finally {
       if (oldWait === undefined) delete process.env.DEDUP_WAIT_MS;
       else process.env.DEDUP_WAIT_MS = oldWait;

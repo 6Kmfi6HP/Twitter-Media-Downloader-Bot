@@ -1,8 +1,5 @@
 import type { TwitterTweet } from '../twitter/types';
-import { escapeHtml, truncateForCaption } from './caption';
-import { CAPTION_LIMIT } from './messages';
-
-export const CAPTION_MAX_LENGTH = CAPTION_LIMIT;
+import { escapeHtml } from './caption';
 
 /**
  * Returns the highest-bitrate MP4 variant URL for a Twitter media item, or
@@ -57,30 +54,6 @@ async function followRedirect(url: string): Promise<string> {
 }
 
 /**
- * Builds the full caption for a tweet including the user header and
- * engagement counts. The text portion has its t.co short links expanded
- * and is HTML-escaped. Uses translated text if available.
- */
-export async function formatTweetCaption(tweet: TwitterTweet): Promise<string> {
-  // 优先使用翻译后的文本
-  const rawText = tweet.translated_text || tweet.text;
-  const text = await replaceShortLinks(rawText);
-
-  // 如果有翻译，显示原语言标记
-  const langIndicator = tweet.translated_text && tweet.lang && !tweet.lang.startsWith('zh')
-    ? `\n🌐 翻译自 ${tweet.lang.toUpperCase()}\n`
-    : '';
-
-  return escapeHtml(`
-📱 <b>${tweet.user.name}</b> (@${tweet.user.screen_name})
-${text}
-${langIndicator}
-❤️ ${tweet.favorite_count} | 🔄 ${tweet.retweet_count} | 💬 ${tweet.reply_count}
-${tweet.view_count ? `👁️ ${tweet.view_count} views` : ''}
-`.trim());
-}
-
-/**
  * Returns just the tweet text (with t.co short links expanded and HTML
  * escaped). Used by the direct download path which already shows the user
  * header on the request page. Uses translated text if available.
@@ -94,10 +67,4 @@ export async function formatTweetCaption_without_name(
   return escapeHtml(text);
 }
 
-/**
- * Convenience helper used by the handler when it just needs a safe
- * pre-truncated caption without touching the limit.
- */
-export function safeCaption(text: string): string {
-  return truncateForCaption(text, CAPTION_MAX_LENGTH);
-}
+

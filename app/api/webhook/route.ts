@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { processUpdate } from '@/lib/telegram/handler';
+import { enqueueUpdateJobs } from '@/lib/queue';
 import type { TelegramUpdate } from '@/lib/telegram/types';
 
 export async function POST(request: Request): Promise<Response> {
@@ -14,8 +14,10 @@ export async function POST(request: Request): Promise<Response> {
 
   try {
     const update: TelegramUpdate = await request.json();
-    await processUpdate(update);
-    return NextResponse.json({ ok: true });
+    // 队列模式:入队后立即确认。下载/发送由进程内 worker 异步消费,
+    // webhook 不再被几十秒的媒体传输阻塞,Telegram 也不会因超时重投。
+    const summary = await enqueueUpdateJobs(update);
+    return NextResponse.json({ ok: true, queued: summary.enqueued, dedup: summary.dedup === true });
   } catch (err) {
     console.error('[webhook] unhandled error:', err);
     // Return 200 to prevent Telegram from retrying indefinitely.
