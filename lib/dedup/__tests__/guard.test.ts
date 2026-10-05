@@ -51,7 +51,7 @@ describe('withTweetDedup 并发', () => {
 
   it('owner 失败 → owner 拿 executed+业务失败 result，等待者 recently-failed；冷却内 recently-failed；冷却过期重新 executed', async () => {
     const url = 'https://x.com/user/status/456';
-    const run = vi.fn(async () => {
+    const run = vi.fn(async (): Promise<{ success: boolean; error?: string }> => {
       await sleep(30);
       return { success: false, error: 'boom' };
     });

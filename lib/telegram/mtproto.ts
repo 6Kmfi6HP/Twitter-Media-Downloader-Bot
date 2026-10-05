@@ -35,13 +35,11 @@ export function isMtprotoConfigured(): boolean {
 
 interface ClientState {
   promise: Promise<TelegramClient> | undefined;
-  ready: boolean;
   failed: boolean;
 }
 
 const state: ClientState = {
   promise: undefined,
-  ready: false,
   failed: false,
 };
 
@@ -88,12 +86,7 @@ export function getMtprotoClient(): Promise<TelegramClient> {
         )
       );
     }
-    state.promise = createClient(config)
-      .then((client) => {
-        state.ready = true;
-        return client;
-      })
-      .catch((err) => {
+    state.promise = createClient(config).catch((err) => {
         state.failed = true;
         state.promise = undefined;
         throw err;
@@ -177,9 +170,3 @@ export async function sendMediaGroupViaMtproto(
   return Array.isArray(sent) ? (sent as Message[]) : ([sent] as unknown as Message[]);
 }
 
-/** Test-only helper to reset the cached client state between tests. */
-export function __resetMtprotoStateForTests(): void {
-  state.promise = undefined;
-  state.ready = false;
-  state.failed = false;
-}

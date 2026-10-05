@@ -1,17 +1,10 @@
 import { setTimeout as delay } from 'node:timers/promises';
-import { extractUrls } from '../utils';
+import { envInt, extractUrls } from '../utils';
 import { claim } from '../dedup/store';
 import { sendMessage } from '../telegram/messages';
 import type { TelegramUpdate } from '../telegram/types';
 import { enqueue, getJob } from './store';
 import { startWorker } from './worker';
-
-function envInt(name: string, defaultValue: number): number {
-  const raw = process.env[name];
-  if (raw === undefined || raw === '') return defaultValue;
-  const parsed = Number(raw);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : defaultValue;
-}
 
 export interface EnqueueSummary {
   enqueued: number;

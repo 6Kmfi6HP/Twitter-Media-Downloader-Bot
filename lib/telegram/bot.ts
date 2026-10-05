@@ -72,35 +72,6 @@ export function createBot(): Bot {
   });
   bot.api.config.use(throttler);
 
-  // Global error handler: log Telegram API errors (GrammyError), network
-  // errors (HttpError), and any unknown errors. We avoid importing the
-  // concrete error classes at module level because the Edge runtime webpack
-  // bundle does not reliably re-export them — instead we duck-type on
-  // `error_code` / `description` (GrammyError shape) and `message`
-  // (HttpError shape).
-  bot.catch((err) => {
-    const error = err.error as Record<string, unknown> | undefined;
-    const updateId = err.ctx?.update?.update_id;
-
-    if (error && typeof error === 'object' && 'error_code' in error) {
-      // GrammyError shape
-      console.error('[telegram] GrammyError', {
-        updateId,
-        code: error.error_code,
-        description: error.description,
-        method: error.method,
-      });
-    } else if (error instanceof Error) {
-      console.error('[telegram] HttpError / network error', {
-        updateId,
-        name: error.name,
-        message: error.message,
-      });
-    } else {
-      console.error('[telegram] unknown error', { updateId, error });
-    }
-  });
-
   return bot;
 }
 

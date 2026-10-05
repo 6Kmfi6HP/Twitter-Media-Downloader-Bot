@@ -1,6 +1,7 @@
 import os from 'node:os';
 import path from 'node:path';
 import Database from 'better-sqlite3';
+import { envInt } from '../utils';
 
 export type JobStatus = 'pending' | 'processing' | 'done' | 'failed';
 
@@ -20,14 +21,6 @@ export interface JobRow {
   lease_until: number | null;
   created_at: number;
   updated_at: number;
-}
-
-/** 读取环境变量整数配置,非法/缺失时回退默认值。 */
-function envInt(name: string, defaultValue: number): number {
-  const raw = process.env[name];
-  if (raw === undefined || raw === '') return defaultValue;
-  const parsed = Number(raw);
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : defaultValue;
 }
 
 export function backoffBaseMs(): number {

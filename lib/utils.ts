@@ -1,8 +1,9 @@
-import { type ClassValue, clsx } from "clsx"
-import { twMerge } from "tailwind-merge"
-
-export function cn(...inputs: ClassValue[]) {
-  return twMerge(clsx(inputs))
+/** 读取环境变量整数配置；缺失/空/非法/非正数时回退默认值。 */
+export function envInt(name: string, defaultValue: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw === '') return defaultValue;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : defaultValue;
 }
 
 export function extractUrls(text: string): string[] {
@@ -56,8 +57,8 @@ export function normalizeTweetKey(url: string): string {
 }
 
 /**
- * 清洗可能含敏感信息的错误文案（与 handler.ts 的 redactSensitive 同语义，
- * 但仅针对字符串）：剥掉 TELEGRAM_BOT_TOKEN 字面量及 /bot[0-9]+:[^/\s]+/ 形态。
+ * 清洗可能含敏感信息的错误文案：剥掉 TELEGRAM_BOT_TOKEN 字面量及 /bot[0-9]+:[^/\s]+/ 形态。
+ * handler.ts 的 redactSensitive 对字符串统一委托到这里，勿再另建副本。
  */
 export function redactErrorText(text: string): string {
   const token = process.env.TELEGRAM_BOT_TOKEN;

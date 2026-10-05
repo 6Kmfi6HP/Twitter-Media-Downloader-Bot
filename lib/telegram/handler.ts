@@ -1,6 +1,6 @@
 import { withTweetDedup } from '../dedup/guard';
 import { downloadTwitterMedia } from '../twitter';
-import type { TwitterMediaItem, TwitterResponse } from '../twitter/types';
+import type { TwitterResponse } from '../twitter/types';
 import {
   sendMessage,
   sendPhoto,
@@ -14,6 +14,7 @@ import {
 } from './formatter';
 import { formatBytes, getMaxUploadBytes } from './limits';
 import { isMtprotoConfigured, sendMediaGroupViaMtproto } from './mtproto';
+import { redactErrorText } from '../utils';
 
 export interface DownloadResult {
   success: boolean;
@@ -22,11 +23,7 @@ export interface DownloadResult {
 }
 
 function redactSensitive(value: unknown): unknown {
-  if (typeof value !== 'string') return value;
-  const token = process.env.TELEGRAM_BOT_TOKEN;
-  let redacted = token ? value.replaceAll(token, '<telegram-token>') : value;
-  redacted = redacted.replace(/bot[0-9]+:[^/\s]+/g, 'bot<telegram-token>');
-  return redacted;
+  return typeof value === 'string' ? redactErrorText(value) : value;
 }
 
 function summarizeError(error: unknown): Record<string, unknown> {
@@ -294,7 +291,3 @@ export async function processDirectDownload(
       };
   }
 }
-
-// Re-export helpers for testing and for backward compatibility.
-export { pickBestMediaUrl } from './formatter';
-export type { TwitterMediaItem };

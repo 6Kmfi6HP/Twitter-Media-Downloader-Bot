@@ -1,6 +1,7 @@
 import os from 'node:os';
 import path from 'node:path';
 import Database from 'better-sqlite3';
+import { envInt } from '../utils';
 
 export type DedupKind = 'tweet' | 'upd';
 export type DedupStatus = 'processing' | 'done' | 'failed';
@@ -20,14 +21,6 @@ export interface DedupRow {
 export type ClaimResult =
   | { role: 'owner'; token: number }
   | { role: 'duplicate'; state: DedupStatus; error?: string };
-
-/** 读取环境变量整数配置，非法/缺失时回退默认值。 */
-function envInt(name: string, defaultValue: number): number {
-  const raw = process.env[name];
-  if (!raw) return defaultValue;
-  const parsed = Number(raw);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : defaultValue;
-}
 
 function leaseMs(): number {
   return envInt('DEDUP_PROCESSING_LEASE_MS', 10 * 60_000);

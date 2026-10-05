@@ -10,13 +10,7 @@ import {
 } from './store';
 import { processDirectDownload } from '../telegram/handler';
 import { deleteMessage, sendMessage } from '../telegram/messages';
-
-function envInt(name: string, defaultValue: number): number {
-  const raw = process.env[name];
-  if (raw === undefined || raw === '') return defaultValue;
-  const parsed = Number(raw);
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : defaultValue;
-}
+import { envInt } from '../utils';
 
 // 进程内单例守卫(Symbol.for 跨 bundle 共享):Next 多 bundle 各持模块副本,
 // 极端情况下可能起多个循环。可接受:claimNext 用事务原子领取,多循环
